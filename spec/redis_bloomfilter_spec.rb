@@ -108,4 +108,11 @@ describe Redis::Bloomfilter do
       bf.insertnx("x").should be true
     end
   end
+
+  context "the ruby driver driver" do
+    it "does not support insertnx" do
+      bf = factory({:size => 10, :error_rate => 0.01, :key_name => '__test_bf'},'ruby')
+      expect { bf.insertnx("x") }.to raise_error
+    end
+  end
 end

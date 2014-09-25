@@ -2,7 +2,7 @@ require "digest/sha1"
 class Redis
   module BloomfilterDriver
     class Ruby
-      
+
       # Faster Ruby version.
       # This driver should be used if Redis version < 2.6
       attr_accessor :redis
@@ -11,8 +11,12 @@ class Redis
       end
 
       # Insert a new element
-      def insert(data) 
+      def insert(data)
         set data, 1
+      end
+
+      def insertnx(data)
+        error "Not supported in the Ruby driver"
       end
 
       # It checks if a key is part of the set
@@ -40,7 +44,7 @@ class Redis
       end
 
       protected
-        # Hashing strategy: 
+        # Hashing strategy:
         # http://www.eecs.harvard.edu/~kirsch/pubs/bbbf/esa06.pdf
         def indexes_for data
           sha = Digest::SHA1.hexdigest(data.to_s)
