@@ -17,20 +17,23 @@ class Redis
       end
 
       def insert(data)
-        set data, 1
+        set(data, 1) == 1
+      end
+
+      def insertnx(data)
+        setnx(data, 1) == 1
       end
 
       def remove(data)
-        set data, 0
+        set(data, 0) == 1
       end
 
-      def include?(key)
-        r = @redis.evalsha(@check_fnc_sha, :keys => [@options[:key_name]], :argv => [@options[:size], @options[:error_rate], key])
-        r == 1 ? true : false
+      def include?(data)
+        call("check", data) == 1
       end
 
       def clear
-        @redis.keys("#{@options[:key_name]}:*").each {|k|@redis.del k}    
+        @redis.keys("#{@options[:key_name]}:*").each {|k|@redis.del k}
       end
 
       protected
@@ -38,78 +41,98 @@ class Redis
         # Taken from https://github.com/ErikDubbelboer/redis-lua-scaling-bloom-filter
         # This is a scalable implementation of BF. It means the initial size can vary
         def lua_load
-          add_fnc = %q(
-            local entries   = ARGV[1]
-            local precision = ARGV[2]
-            local set_value = ARGV[4]
-            local index     = math.ceil(redis.call('INCR', KEYS[1] .. ':count') / entries)
-            local key       = KEYS[1] .. ':' .. index
-            local bits = math.floor(-(entries * math.log(precision * math.pow(0.5, index))) / 0.480453013)
-            local k = math.floor(0.693147180 * bits / entries)
-            local hash = redis.sha1hex(ARGV[3])
-            local h = { }
-            h[0] = tonumber(string.sub(hash, 0 , 8 ), 16)
-            h[1] = tonumber(string.sub(hash, 8 , 16), 16)
-            h[2] = tonumber(string.sub(hash, 16, 24), 16)
-            h[3] = tonumber(string.sub(hash, 24, 32), 16)
-            for i=1, k do
-              redis.call('SETBIT', key, (h[i % 2] + i * h[2 + (((i + (i % 2)) % 4) / 2)]) % bits, set_value)
-            end
-          )
-          
-          check_fnc = %q(
+          functions = %q(
+            local functions = {}
+            functions.check = function(key, entries, precision, data)
+              local keyct = key .. ':count'
+              local index     = redis.call('GET', keyct)
+              if not index then
+                return 0
+              end
+              index = math.ceil(index / entries)
+              local hash = redis.sha1hex(data)
+              local h = { }
+              h[0] = tonumber(string.sub(hash, 0 , 8 ), 16)
+              h[1] = tonumber(string.sub(hash, 8 , 16), 16)
+              h[2] = tonumber(string.sub(hash, 16, 24), 16)
+              h[3] = tonumber(string.sub(hash, 24, 32), 16)
+              local maxk = math.floor(0.693147180 * math.floor((entries * math.log(precision * math.pow(0.5, index))) / -0.480453013) / entries)
+              local b    = { }
+              for i=1, maxk do
+                table.insert(b, h[i % 2] + i * h[2 + (((i + (i % 2)) % 4) / 2)])
+              end
+              for n=1, index do
+                local key   = key .. ':' .. n
+                local found = true
+                local bits = math.floor((entries * math.log(precision * math.pow(0.5, n))) / -0.480453013)
+                local k = math.floor(0.693147180 * bits / entries)
 
-            local entries   = ARGV[1]
-            local precision = ARGV[2]
-            local index     = redis.call('GET', KEYS[1] .. ':count')
-            if not index then
-              return 0
-            end
-            index     = math.ceil(redis.call('GET', KEYS[1] .. ':count') / entries)
-            local hash = redis.sha1hex(ARGV[3])
-            local h = { }
-            h[0] = tonumber(string.sub(hash, 0 , 8 ), 16)
-            h[1] = tonumber(string.sub(hash, 8 , 16), 16)
-            h[2] = tonumber(string.sub(hash, 16, 24), 16)
-            h[3] = tonumber(string.sub(hash, 24, 32), 16)
-            local maxk = math.floor(0.693147180 * math.floor((entries * math.log(precision * math.pow(0.5, index))) / -0.480453013) / entries)
-            local b    = { }
-            for i=1, maxk do
-              table.insert(b, h[i % 2] + i * h[2 + (((i + (i % 2)) % 4) / 2)])
-            end
-            for n=1, index do
-              local key   = KEYS[1] .. ':' .. n
-              local found = true
-              local bits = math.floor((entries * math.log(precision * math.pow(0.5, n))) / -0.480453013)
-              local k = math.floor(0.693147180 * bits / entries)
+                for i=1, k do
+                  if redis.call('GETBIT', key, b[i] % bits) == 0 then
+                    found = false
+                    break
+                  end
+                end
 
-              for i=1, k do
-                if redis.call('GETBIT', key, b[i] % bits) == 0 then
-                  found = false
-                  break
+                if found then
+                  return 1
                 end
               end
 
-              if found then
+              return 0
+            end
+
+            functions.set = function(key, entries, precision, data, set_value)
+              local index     = math.ceil(redis.call('INCR', key .. ':count') / entries)
+              local key       = key .. ':' .. index
+              local bits = math.floor(-(entries * math.log(precision * math.pow(0.5, index))) / 0.480453013)
+              local k = math.floor(0.693147180 * bits / entries)
+              local hash = redis.sha1hex(data)
+              local h = { }
+              h[0] = tonumber(string.sub(hash, 0 , 8 ), 16)
+              h[1] = tonumber(string.sub(hash, 8 , 16), 16)
+              h[2] = tonumber(string.sub(hash, 16, 24), 16)
+              h[3] = tonumber(string.sub(hash, 24, 32), 16)
+              for i=1, k do
+                redis.call('SETBIT', key, (h[i % 2] + i * h[2 + (((i + (i % 2)) % 4) / 2)]) % bits, set_value)
+              end
+              return 1
+            end
+
+            functions.setnx = function(key, entries, precision, data, set_value)
+              if functions.check(key, entries, precision, data) ~= 1 then
+                functions.set(key, entries, precision, data, set_value)
                 return 1
+              else
+                return 0
               end
             end
 
-            return 0
-          )
-          
-          @add_fnc_sha   = Digest::SHA1.hexdigest(add_fnc)
-          @check_fnc_sha = Digest::SHA1.hexdigest(check_fnc)
+            local function invoke(f, ...)
+              return functions[f](KEYS[1], ...)
+            end
 
-          loaded = @redis.script(:exists, [@add_fnc_sha, @check_fnc_sha]).uniq
+            return invoke(unpack(ARGV))
+          )
+
+          @functions_sha   = Digest::SHA1.hexdigest(functions)
+
+          loaded = @redis.script(:exists, [@functions_sha]).uniq
           if loaded.count != 1 || loaded.first != true
-            @add_fnc_sha   = @redis.script(:load, add_fnc)
-            @check_fnc_sha = @redis.script(:load, check_fnc)
+            @functions_sha   = @redis.script(:load, functions)
           end
         end
 
         def set(data, val)
-          @redis.evalsha(@add_fnc_sha, :keys => [@options[:key_name]], :argv => [@options[:size], @options[:error_rate], data, val])
+          call "set", [data, val]
+        end
+
+        def setnx(data, val)
+          call "setnx", [data, val]
+        end
+
+        def call(func, args)
+          @redis.evalsha(@functions_sha, :keys => [@options[:key_name]], :argv => [func, @options[:size], @options[:error_rate]] + Array(args))
         end
     end
   end

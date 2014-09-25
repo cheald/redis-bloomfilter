@@ -40,7 +40,7 @@ class Redis
 
       driver_class = Redis::BloomfilterDriver.const_get(driver_name)
       @driver = driver_class.new @options
-      @driver.redis = @redis 
+      @driver.redis = @redis
     end
 
     # Methods used to calculate M and K
@@ -58,6 +58,10 @@ class Redis
     # Insert a new element
     def insert(data)
       @driver.insert data
+    end
+
+    def insertnx(data)
+      @driver.insertnx data
     end
 
     # It checks if a key is part of the set

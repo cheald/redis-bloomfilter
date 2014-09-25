@@ -33,7 +33,7 @@ describe Redis::Bloomfilter do
   end
 
   it 'should choose the right driver based on the Redis version' do
-    
+
     redis_mock = flexmock("redis")
     redis_mock.should_receive(:info).and_return({'redis_version' => '2.6.0'})
     redis_mock.should_receive(:script).and_return([true, true])
@@ -76,14 +76,14 @@ describe Redis::Bloomfilter do
       bf.clear
     end
 
-    it 'should remove an elemnt from the filter' do 
+    it 'should remove an elemnt from the filter' do
 
       bf = factory({:size => 100, :error_rate => 0.01, :key_name => '__test_bf'},driver)
       bf.insert "asdlolol"
       bf.include?("asdlolol").should be true
       bf.remove "asdlolol"
       bf.include?("asdlolol").should be false
-      
+
     end
   end
 
@@ -93,7 +93,19 @@ describe Redis::Bloomfilter do
     e = test_error_rate(bf, 100)
     e.should be <= bf.options[:error_rate]
     bf.clear
-    
   end
 
+  context "the lua driver" do
+    it "supports insertnx" do
+      bf = factory({:size => 10, :error_rate => 0.01, :key_name => '__test_bf'},'lua')
+      bf.clear
+
+      bf.include?("x").should be false
+      bf.insertnx("x").should be true
+      bf.include?("x").should be true
+      bf.insertnx("x").should be false
+      bf.remove("x").should be true
+      bf.insertnx("x").should be true
+    end
+  end
 end
